@@ -10,34 +10,12 @@ import (
 	"github.com/lib/pq"
 )
 
-var ErrMissingSchemaMigration = errors.New("missing schema migrations")
+var (
+	errMissingSchemaMigration = errors.New("missing schema migrations")
+)
 
+// Migration represents a database migration.
 type Migration func(tx *sql.Tx) error
-
-func initializeSchemaMigrations(db *sql.DB) error {
-	if _, err := db.Exec(`create table schema_migrations (
-		version int primary key,
-		created_at timestamptz not null default now()
-	)`); err != nil {
-		return err
-	}
-	return nil
-}
-
-func withTx(db *sql.DB, f func(tx *sql.Tx) error) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	if err := f(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
-}
 
 // Migrate the database through outstanding migrations. Each migration is
 // executed in a separate transaction, in the order of the numeric keys.
@@ -54,14 +32,14 @@ func Migrate(db *sql.DB, migrations map[int]Migration) error {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			var pqerr = &pq.Error{}
 			if errors.As(err, &pqerr) && pqerr.Code.Name() == "undefined_table" {
-				return ErrMissingSchemaMigration
+				return errMissingSchemaMigration
 			}
 			return fmt.Errorf("failed to select max applied migration: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrMissingSchemaMigration) {
+		if errors.Is(err, errMissingSchemaMigration) {
 			if err = initializeSchemaMigrations(db); err != nil {
 				return fmt.Errorf("failed to initialize schema migrations: %w", err)
 			}
@@ -91,5 +69,30 @@ func Migrate(db *sql.DB, migrations map[int]Migration) error {
 		}
 	}
 
+	return nil
+}
+
+func initializeSchemaMigrations(db *sql.DB) error {
+	if _, err := db.Exec(`create table schema_migrations (
+		version int primary key,
+		created_at timestamptz not null default now()
+	)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func withTx(db *sql.DB, f func(tx *sql.Tx) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := f(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	return nil
 }
